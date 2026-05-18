@@ -22,6 +22,7 @@ interface FlightData {
   stops: number;
   duration: string;
   airline: string;
+  deepLink?: string;
 }
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -38,8 +39,16 @@ const SOURCE_LABELS: Record<string, string> = {
   UNITED_DIRECT: "United",
 };
 
+// Build a fallback Google Flights search URL from the flight date
+function buildFallbackUrl(date: string): string {
+  // ZRH → XNA route with the flight date
+  const d = date.replace(/-/g, "");
+  return `https://www.google.com/travel/flights?q=flights+from+ZRH+to+XNA+on+${d}`;
+}
+
 export function FlightCard({ flight }: { flight: FlightData }) {
   const [expanded, setExpanded] = useState(false);
+  const bookingUrl = flight.deepLink || buildFallbackUrl(flight.date);
   const isDown = flight.priceChange < 0;
   const isUp = flight.priceChange > 0;
 
@@ -123,10 +132,15 @@ export function FlightCard({ flight }: { flight: FlightData }) {
 
       {/* ─── Actions ─── */}
       <div className="flex items-center gap-2">
-        <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-all active:scale-[0.98]">
+        <a
+          href={bookingUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-all active:scale-[0.98] no-underline"
+        >
           <ExternalLink className="w-3.5 h-3.5" />
           Book Now
-        </button>
+        </a>
         <button
           className="flex items-center justify-center px-3 py-2 text-xs text-muted-foreground rounded-lg hover:bg-muted/50 transition-colors"
           onClick={() => setExpanded(!expanded)}

@@ -1,316 +1,206 @@
-import {
-  Plane,
-  RefreshCw,
-  TrendingDown,
-  TrendingUp,
-  Clock,
-  AlertTriangle,
-  Plus,
-} from "lucide-react";
-import { FlightCard } from "@/components/FlightCard";
-import { PriceChart } from "@/components/PriceChart";
+import { prisma } from "@flightradar/db";
 import { Header } from "@/components/Header";
+import { PriorityBand } from "@/components/PriorityBand";
+import { PriceChartSection } from "@/components/PriceChartSection";
+import { StatsGrid } from "@/components/StatsGrid";
+import { DealAlert } from "@/components/DealAlert";
+import type { FlightCardData } from "@/types";
+import { SOURCE_LABELS } from "@/types";
 
-// ─── Demo data (replaced by API calls once DB is wired) ─────
+// ─── Data Fetching (Server Component) ────────────────────────
 
-const DEMO_FLIGHTS = {
-  P1: [
-    {
-      id: "p1-jun24",
-      date: "2026-06-24",
-      dayOfWeek: "Wednesday",
-      priority: "P1" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 487,
-        KAYAK: 502,
-        SKYSCANNER: 479,
+async function getFlights(): Promise<{
+  p1: FlightCardData[];
+  p2: FlightCardData[];
+  chartData: Array<{ date: string; google: number; kayak: number; skyscanner: number }>;
+  stats: { lowestPrice: number; lowestDate: string; lowestSource: string; avgPrice: number };
+}> {
+  const flights = await prisma.watchedFlight.findMany({
+    where: { active: true },
+    include: {
+      priceSnapshots: {
+        orderBy: { scrapedAt: "desc" },
       },
-      lowestPrice: 479,
-      lowestSource: "Skyscanner",
-      priceChange: -23,
-      priceChangePercent: -4.6,
-      stops: 1,
-      duration: "14h 35m",
-      airline: "United Airlines",
     },
-    {
-      id: "p1-jun25",
-      date: "2026-06-25",
-      dayOfWeek: "Thursday",
-      priority: "P1" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 512,
-        KAYAK: 519,
-        SKYSCANNER: 508,
-      },
-      lowestPrice: 508,
-      lowestSource: "Skyscanner",
-      priceChange: 5,
-      priceChangePercent: 1.0,
-      stops: 1,
-      duration: "15h 10m",
-      airline: "United Airlines",
-    },
-    {
-      id: "p1-jun29",
-      date: "2026-06-29",
-      dayOfWeek: "Sunday",
-      priority: "P1" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 499,
-        KAYAK: 515,
-        SKYSCANNER: 492,
-      },
-      lowestPrice: 492,
-      lowestSource: "Skyscanner",
-      priceChange: 12,
-      priceChangePercent: 2.5,
-      stops: 1,
-      duration: "14h 50m",
-      airline: "United Airlines",
-    },
-  ],
-  P2: [
-    {
-      id: "p2-jun26",
-      date: "2026-06-26",
-      dayOfWeek: "Thursday",
-      priority: "P2" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 445,
-        KAYAK: 462,
-        SKYSCANNER: 439,
-      },
-      lowestPrice: 439,
-      lowestSource: "Skyscanner",
-      priceChange: -31,
-      priceChangePercent: -6.6,
-      stops: 1,
-      duration: "14h 45m",
-      airline: "United Airlines",
-    },
-    {
-      id: "p2-jun28",
-      date: "2026-06-28",
-      dayOfWeek: "Saturday",
-      priority: "P2" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 578,
-        KAYAK: 585,
-        SKYSCANNER: 571,
-      },
-      lowestPrice: 571,
-      lowestSource: "Skyscanner",
-      priceChange: 18,
-      priceChangePercent: 3.3,
-      stops: 1,
-      duration: "15h 20m",
-      airline: "United Airlines",
-    },
-    {
-      id: "p2-jun30",
-      date: "2026-06-30",
-      dayOfWeek: "Monday",
-      priority: "P2" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 468,
-        KAYAK: 475,
-        SKYSCANNER: 461,
-      },
-      lowestPrice: 461,
-      lowestSource: "Skyscanner",
-      priceChange: -8,
-      priceChangePercent: -1.7,
-      stops: 1,
-      duration: "14h 40m",
-      airline: "United Airlines",
-    },
-    {
-      id: "p2-jul01",
-      date: "2026-07-01",
-      dayOfWeek: "Tuesday",
-      priority: "P2" as const,
-      prices: {
-        GOOGLE_FLIGHTS: 432,
-        KAYAK: 448,
-        SKYSCANNER: 425,
-      },
-      lowestPrice: 425,
-      lowestSource: "Skyscanner",
-      priceChange: -42,
-      priceChangePercent: -9.0,
-      stops: 1,
-      duration: "14h 30m",
-      airline: "United Airlines",
-    },
-  ],
-};
+    orderBy: [{ priority: "asc" }, { dateOut: "asc" }],
+  });
 
-// Sample chart data (14 days)
-function generateChartData() {
-  const data = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    data.push({
-      date: d.toISOString().split("T")[0]!,
-      google: Math.round(490 + (Math.random() - 0.5) * 60),
-      kayak: Math.round(510 + (Math.random() - 0.5) * 70),
-      skyscanner: Math.round(480 + (Math.random() - 0.5) * 50),
-    });
+  const p1: FlightCardData[] = [];
+  const p2: FlightCardData[] = [];
+  let globalLowest = Infinity;
+  let globalLowestDate = "";
+  let globalLowestSource = "";
+  let allPrices: number[] = [];
+
+  // Aggregate chart data across all flights (last 14 days)
+  const chartMap: Record<string, { google: number[]; kayak: number[]; skyscanner: number[] }> = {};
+
+  for (const flight of flights) {
+    const snapshots = flight.priceSnapshots;
+
+    // Get latest price per source
+    const latestBySource: Record<string, { price: number; snap: typeof snapshots[0] }> = {};
+    for (const snap of snapshots) {
+      if (!latestBySource[snap.source] || snap.scrapedAt > latestBySource[snap.source]!.snap.scrapedAt) {
+        latestBySource[snap.source] = { price: snap.priceUSD, snap };
+      }
+    }
+
+    // Build prices map
+    const prices: Record<string, number> = {};
+    for (const [source, data] of Object.entries(latestBySource)) {
+      prices[source] = Math.round(data.price);
+    }
+
+    // Find lowest
+    const priceValues = Object.values(prices);
+    const lowest = priceValues.length > 0 ? Math.min(...priceValues) : 0;
+    const lowestSourceEntry = Object.entries(prices).find(([, v]) => v === lowest);
+
+    // Calculate price change (compare latest vs 24h ago)
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const recentPrices = snapshots.filter((s) => s.scrapedAt >= yesterday).map((s) => s.priceUSD);
+    const olderPrices = snapshots.filter((s) => s.scrapedAt < yesterday && s.scrapedAt >= new Date(yesterday.getTime() - 24 * 60 * 60 * 1000)).map((s) => s.priceUSD);
+    const avgRecent = recentPrices.length > 0 ? recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length : lowest;
+    const avgOlder = olderPrices.length > 0 ? olderPrices.reduce((a, b) => a + b, 0) / olderPrices.length : avgRecent;
+    const priceChange = Math.round(avgRecent - avgOlder);
+    const priceChangePercent = avgOlder > 0 ? ((avgRecent - avgOlder) / avgOlder) * 100 : 0;
+
+    // Track global stats
+    allPrices.push(lowest);
+    if (lowest < globalLowest) {
+      globalLowest = lowest;
+      globalLowestDate = flight.dateOut.toISOString().split("T")[0]!;
+      globalLowestSource = lowestSourceEntry ? lowestSourceEntry[0] : "";
+    }
+
+    // Get first snapshot info for stops/duration
+    const firstSnap = snapshots[0];
+
+    const dateStr = flight.dateOut.toISOString().split("T")[0]!;
+    const dayOfWeek = flight.dateOut.toLocaleDateString("en-US", { weekday: "long" });
+
+    const card: FlightCardData = {
+      id: flight.id,
+      date: dateStr,
+      dayOfWeek,
+      priority: flight.priority as "P1" | "P2" | "P3",
+      prices,
+      lowestPrice: lowest,
+      lowestSource: lowestSourceEntry ? lowestSourceEntry[0] : "",
+      priceChange,
+      priceChangePercent: Math.round(priceChangePercent * 10) / 10,
+      stops: firstSnap?.stops ?? 1,
+      duration: firstSnap?.durationMin ? `${Math.floor(firstSnap.durationMin / 60)}h ${firstSnap.durationMin % 60}m` : "~12h",
+      airline: firstSnap?.airline ?? flight.carrier ?? "United Airlines",
+      deepLink: firstSnap?.deepLink ?? undefined,
+    };
+
+    if (flight.priority === "P1") p1.push(card);
+    else p2.push(card);
+
+    // Build chart data
+    for (const snap of snapshots) {
+      const dateKey = snap.scrapedAt.toISOString().split("T")[0]!;
+      if (!chartMap[dateKey]) {
+        chartMap[dateKey] = { google: [], kayak: [], skyscanner: [] };
+      }
+      const sourceKey = snap.source === "GOOGLE_FLIGHTS" ? "google" : snap.source === "KAYAK" ? "kayak" : "skyscanner";
+      chartMap[dateKey]![sourceKey]?.push(snap.priceUSD);
+    }
   }
-  return data;
-}
 
-const CHART_DATA = generateChartData();
+  // Average chart data per day
+  const chartData = Object.entries(chartMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-14)
+    .map(([date, sources]) => ({
+      date,
+      google: sources.google.length > 0 ? Math.round(sources.google.reduce((a, b) => a + b, 0) / sources.google.length) : 0,
+      kayak: sources.kayak.length > 0 ? Math.round(sources.kayak.reduce((a, b) => a + b, 0) / sources.kayak.length) : 0,
+      skyscanner: sources.skyscanner.length > 0 ? Math.round(sources.skyscanner.reduce((a, b) => a + b, 0) / sources.skyscanner.length) : 0,
+    }));
+
+  const avgPrice = allPrices.length > 0 ? Math.round(allPrices.reduce((a, b) => a + b, 0) / allPrices.length) : 0;
+
+  return {
+    p1,
+    p2,
+    chartData,
+    stats: {
+      lowestPrice: globalLowest === Infinity ? 0 : globalLowest,
+      lowestDate: globalLowestDate,
+      lowestSource: SOURCE_LABELS[globalLowestSource] ?? globalLowestSource,
+      avgPrice,
+    },
+  };
+}
 
 // ─── Page ────────────────────────────────────────────────────
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const { p1, p2, chartData, stats } = await getFlights();
+
+  // Find biggest drop for deal alert
+  const allCards = [...p1, ...p2];
+  const biggestDrop = allCards
+    .filter((c) => c.priceChange < 0)
+    .sort((a, b) => a.priceChange - b.priceChange)[0];
+
   return (
     <div className="min-h-screen">
       <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
-        {/* ─── Deal Alerts Banner ─── */}
-        <div className="fr-card p-4 fr-glow">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10">
-              <AlertTriangle className="w-5 h-5 text-primary" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-primary">
-                🚨 Price drop detected!
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Jul 1 (Tue) dropped <span className="fr-price-down font-semibold">9%</span> to{" "}
-                <span className="text-foreground font-semibold">$425</span> on Skyscanner — Tuesday departures are historically cheapest.
-              </p>
-            </div>
-            <button className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
-              View Deal
-            </button>
-          </div>
-        </div>
+        {/* ─── Deal Alert ─── */}
+        {biggestDrop && (
+          <DealAlert
+            date={biggestDrop.date}
+            dayOfWeek={biggestDrop.dayOfWeek}
+            dropPercent={Math.abs(biggestDrop.priceChangePercent)}
+            price={biggestDrop.lowestPrice}
+            source={biggestDrop.lowestSource}
+            deepLink={biggestDrop.deepLink}
+          />
+        )}
 
         {/* ─── P1 Priority Band ─── */}
-        <section>
-          <div className="flex items-center gap-3 mb-4">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tracking-wide uppercase"
-              style={{ background: "hsl(0 90% 64% / 0.15)", color: "hsl(0 90% 64%)" }}>
-              P1
-            </span>
-            <h2 className="text-lg font-semibold text-foreground">
-              High Priority — June 24, 25, 29
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {DEMO_FLIGHTS.P1.map((flight) => (
-              <FlightCard key={flight.id} flight={flight} />
-            ))}
-          </div>
-        </section>
+        {p1.length > 0 && (
+          <PriorityBand
+            priority="P1"
+            label="High Priority"
+            description={`June ${p1.map((f) => new Date(f.date + "T00:00:00").getDate()).join(", ")}`}
+            flights={p1}
+            columns={p1.length}
+          />
+        )}
 
         {/* ─── P2 Priority Band ─── */}
-        <section>
-          <div className="flex items-center gap-3 mb-4">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tracking-wide uppercase"
-              style={{ background: "hsl(38 92% 50% / 0.15)", color: "hsl(38 92% 50%)" }}>
-              P2
-            </span>
-            <h2 className="text-lg font-semibold text-foreground">
-              Medium Priority — June 26, 28, 30 & July 1
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {DEMO_FLIGHTS.P2.map((flight) => (
-              <FlightCard key={flight.id} flight={flight} />
-            ))}
-          </div>
-        </section>
+        {p2.length > 0 && (
+          <PriorityBand
+            priority="P2"
+            label="Medium Priority"
+            description={p2.map((f) => {
+              const d = new Date(f.date + "T00:00:00");
+              return `${d.toLocaleDateString("en-US", { month: "short" })} ${d.getDate()}`;
+            }).join(", ")}
+            flights={p2}
+            columns={Math.min(p2.length, 4)}
+          />
+        )}
 
         {/* ─── Price Trend Chart ─── */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">
-              Price Trend — Last 14 Days
-            </h2>
-            <div className="flex items-center gap-4 text-xs">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-0.5 rounded-full" style={{ background: "hsl(217 91% 60%)" }} />
-                Google Flights
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-0.5 rounded-full" style={{ background: "hsl(25 95% 53%)" }} />
-                Kayak
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-0.5 rounded-full" style={{ background: "hsl(174 72% 40%)" }} />
-                Skyscanner
-              </span>
-            </div>
-          </div>
-          <div className="fr-card p-6">
-            <PriceChart data={CHART_DATA} />
-          </div>
-        </section>
+        <PriceChartSection data={chartData} />
 
         {/* ─── Quick Stats ─── */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            label="Lowest Today"
-            value="$425"
-            detail="Jul 1 — Skyscanner"
-            trend="down"
-          />
-          <StatCard
-            label="Avg Price"
-            value="$486"
-            detail="Across all dates"
-            trend="neutral"
-          />
-          <StatCard
-            label="Best Day"
-            value="Tuesday"
-            detail="Historically -8% cheaper"
-            trend="down"
-          />
-          <StatCard
-            label="Sources Active"
-            value="3/3"
-            detail="All scrapers healthy"
-            trend="neutral"
-          />
-        </section>
+        <StatsGrid
+          lowestPrice={stats.lowestPrice}
+          lowestDate={stats.lowestDate}
+          lowestSource={stats.lowestSource}
+          avgPrice={stats.avgPrice}
+        />
       </main>
-    </div>
-  );
-}
-
-// ─── StatCard ────────────────────────────────────────────────
-
-function StatCard({
-  label,
-  value,
-  detail,
-  trend,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  trend: "up" | "down" | "neutral";
-}) {
-  return (
-    <div className="fr-card p-4">
-      <p className="text-xs text-muted-foreground mb-1">{label}</p>
-      <p className="text-2xl font-bold text-foreground">{value}</p>
-      <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-        {trend === "down" && (
-          <TrendingDown className="w-3 h-3 fr-price-down" />
-        )}
-        {trend === "up" && <TrendingUp className="w-3 h-3 fr-price-up" />}
-        {detail}
-      </p>
     </div>
   );
 }
