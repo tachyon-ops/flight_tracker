@@ -1,0 +1,3 @@
+[submodule "vendor/prisma"]
+	path = vendor/prisma
+	url = git@github.com:tachyon-ops/prisma.git

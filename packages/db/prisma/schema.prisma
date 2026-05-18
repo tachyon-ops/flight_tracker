@@ -1,0 +1,106 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Core models ──────────────────────────────────────────────
+
+model WatchedFlight {
+  id          String   @id @default(cuid())
+  origin      String   // IATA: "ZRH"
+  destination String   // IATA: "XNA"
+  carrier     String?  // "UA" (IATA airline code)
+  dateOut     DateTime // Outbound date
+  dateReturn  DateTime? // null = one-way
+  isRoundTrip Boolean  @default(true)
+  priority    String   @default("P2") // P1, P2, P3
+  notes       String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  priceSnapshots PriceSnapshot[]
+  alerts         Alert[]
+}
+
+model PriceSnapshot {
+  id              String   @id @default(cuid())
+  flightId        String
+  flight          WatchedFlight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  source          String   // GOOGLE_FLIGHTS, KAYAK, SKYSCANNER, etc.
+  priceUSD        Float
+  priceCHF        Float?
+  priceEUR        Float?
+  currency        String   @default("USD")
+  rawPriceLocal   Float?   // Price in booking currency (for arbitrage)
+  bookingCurrency String?  // The currency the site quoted in
+  cabin           String   @default("ECONOMY") // ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
+  stops           Int      @default(1)
+  durationMin     Int?     // Total journey minutes
+  airline         String?
+  flightNumbers   String?  // JSON array: ["UA 123", "UA 456"]
+  deepLink        String?  // Direct booking URL
+  scrapedAt       DateTime @default(now())
+
+  @@index([flightId, scrapedAt])
+  @@index([source])
+}
+
+model Alert {
+  id           String   @id @default(cuid())
+  flightId     String
+  flight       WatchedFlight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  type         String   // PRICE_DROP_PERCENT, PRICE_DROP_ABSOLUTE, ERROR_FARE_DETECTED, etc.
+  threshold    Float?   // Drop % or absolute price
+  channels     String   // JSON array: ["EMAIL", "TELEGRAM", "WHATSAPP", "WEBHOOK"]
+  triggered    Boolean  @default(false)
+  triggeredAt  DateTime?
+  createdAt    DateTime @default(now())
+}
+
+model DealIntelligence {
+  id             String   @id @default(cuid())
+  type           String   // ERROR_FARE, HIDDEN_CITY, FUEL_DUMP, etc.
+  origin         String
+  destination    String
+  priceUSD       Float
+  normalPriceUSD Float?
+  discountPct    Float?
+  source         String
+  bookingUrl     String
+  expiresAt      DateTime?
+  notes          String?  // Strategy notes
+  confidence     Float    @default(0.5) // 0-1
+  createdAt      DateTime @default(now())
+}
+
+model AirportAlternative {
+  id              String   @id @default(cuid())
+  hubOrigin       String   // "ZRH"
+  alternative     String   // "BSL", "GVA", "MUC"
+  driveMins       Int
+  avgPriceUSD     Float
+  hubAvgPriceUSD  Float
+  savingsUSD      Float
+  transferCostUSD Float    // Gas, parking, etc.
+  netSavingsUSD   Float    // savingsUSD - transferCostUSD
+  updatedAt       DateTime @updatedAt
+}
+
+model PricePrediction {
+  id            String   @id @default(cuid())
+  flightId      String
+  predictedLow  Float
+  predictedHigh Float
+  buyNow        Boolean  // Hopper-style recommendation
+  confidence    Float
+  modelVersion  String
+  createdAt     DateTime @default(now())
+}
