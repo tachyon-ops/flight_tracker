@@ -48,10 +48,15 @@ export async function POST(request: Request) {
         cabin: "ECONOMY",
       });
 
-      // Store results in database
+      // Store results in database (with data validation)
       let saved = 0;
       for (const sourceResult of results) {
         for (const price of sourceResult.results) {
+          // Validate data before saving — scrapers can return garbage
+          if (price.priceUSD < 10 || price.priceUSD > 50000) continue;
+          if (price.stops < 0 || price.stops > 10) continue;
+          if (price.durationMin && (price.durationMin < 30 || price.durationMin > 5000)) continue;
+
           await prisma.priceSnapshot.create({
             data: {
               flightId: flight.id,
@@ -59,13 +64,13 @@ export async function POST(request: Request) {
               priceUSD: price.priceUSD,
               currency: "USD",
               cabin: price.cabin,
-              stops: price.stops,
-              durationMin: price.durationMin,
-              airline: price.airline,
+              stops: Math.min(price.stops, 10),
+              durationMin: price.durationMin ? Math.min(price.durationMin, 5000) : null,
+              airline: price.airline?.slice(0, 100),
               flightNumbers: price.flightNumbers
                 ? JSON.stringify(price.flightNumbers)
                 : null,
-              deepLink: price.deepLink,
+              deepLink: price.deepLink?.slice(0, 500),
               scrapedAt: price.scrapedAt,
             },
           });

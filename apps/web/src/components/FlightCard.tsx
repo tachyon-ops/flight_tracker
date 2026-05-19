@@ -7,57 +7,50 @@ import {
   ExternalLink,
   ChevronDown,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import type { FlightCardData } from "@/types";
+import { SOURCE_COLORS } from "@/types";
+import { MiniPriceChart } from "./MiniPriceChart";
 
-interface FlightData {
-  id: string;
-  date: string;
-  dayOfWeek: string;
-  priority: "P1" | "P2" | "P3";
-  prices: Record<string, number>;
-  lowestPrice: number;
-  lowestSource: string;
-  priceChange: number;
-  priceChangePercent: number;
-  stops: number;
-  duration: string;
-  airline: string;
-  deepLink?: string;
-}
-
-const SOURCE_COLORS: Record<string, string> = {
-  GOOGLE_FLIGHTS: "hsl(217 91% 60%)",
-  KAYAK: "hsl(25 95% 53%)",
-  SKYSCANNER: "hsl(174 72% 40%)",
-  UNITED_DIRECT: "hsl(215 50% 40%)",
-};
-
-const SOURCE_LABELS: Record<string, string> = {
+const SOURCE_SHORT_LABELS: Record<string, string> = {
   GOOGLE_FLIGHTS: "Google",
   KAYAK: "Kayak",
   SKYSCANNER: "Sky",
   UNITED_DIRECT: "United",
 };
 
-// Build a fallback Google Flights search URL from the flight date
 function buildFallbackUrl(date: string): string {
-  // ZRH → XNA route with the flight date
   const d = date.replace(/-/g, "");
   return `https://www.google.com/travel/flights?q=flights+from+ZRH+to+XNA+on+${d}`;
 }
 
-export function FlightCard({ flight }: { flight: FlightData }) {
+export function FlightCard({ flight }: { flight: FlightCardData }) {
   const [expanded, setExpanded] = useState(false);
+  const [chartData, setChartData] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const bookingUrl = flight.deepLink || buildFallbackUrl(flight.date);
   const isDown = flight.priceChange < 0;
   const isUp = flight.priceChange > 0;
 
-  // Format date nicely
   const dateObj = new Date(flight.date + "T00:00:00");
   const monthDay = dateObj.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
+
+  // Fetch price history when expanded
+  useEffect(() => {
+    if (expanded && !chartData) {
+      setLoading(true);
+      fetch(`/api/flights/${flight.id}/prices?days=14`)
+        .then((r) => r.json())
+        .then((data) => {
+          setChartData(data.chartData || []);
+        })
+        .catch(() => setChartData([]))
+        .finally(() => setLoading(false));
+    }
+  }, [expanded, chartData, flight.id]);
 
   return (
     <div className="fr-card p-4 flex flex-col gap-3 group">
@@ -99,7 +92,7 @@ export function FlightCard({ flight }: { flight: FlightData }) {
       </div>
 
       {/* ─── Source comparison ─── */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {Object.entries(flight.prices).map(([source, price]) => (
           <div
             key={source}
@@ -109,12 +102,8 @@ export function FlightCard({ flight }: { flight: FlightData }) {
               className="w-1.5 h-1.5 rounded-full"
               style={{ background: SOURCE_COLORS[source] || "#666" }}
             />
-            <span>
-              {SOURCE_LABELS[source] || source}
-            </span>
-            <span className="font-medium text-foreground/80">
-              ${price}
-            </span>
+            <span>{SOURCE_SHORT_LABELS[source] || source}</span>
+            <span className="font-medium text-foreground/80">${price}</span>
           </div>
         ))}
       </div>
@@ -146,19 +135,30 @@ export function FlightCard({ flight }: { flight: FlightData }) {
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronDown
-            className={`w-4 h-4 transition-transform ${
-              expanded ? "rotate-180" : ""
-            }`}
+            className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""}`}
           />
         </button>
       </div>
 
-      {/* ─── Expanded: price history ─── */}
+      {/* ─── Expanded: price history chart ─── */}
       {expanded && (
         <div className="border-t border-border/40 pt-3 mt-1">
-          <p className="text-xs text-muted-foreground mb-2">
-            Price history for this date coming soon...
-          </p>
+          {loading && (
+            <div className="flex items-center justify-center py-4">
+              <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="ml-2 text-xs text-muted-foreground">
+                Loading history...
+              </span>
+            </div>
+          )}
+          {chartData && chartData.length > 0 && (
+            <MiniPriceChart data={chartData} />
+          )}
+          {chartData && chartData.length === 0 && !loading && (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              No price history yet. Run a scan to start tracking.
+            </p>
+          )}
         </div>
       )}
     </div>
